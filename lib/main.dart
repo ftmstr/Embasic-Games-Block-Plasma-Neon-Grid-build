@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'data/game_repository.dart';
 import 'data/game_storage.dart';
 import 'domain/game_engine.dart';
@@ -93,6 +94,7 @@ class _ClassicScreenState extends State<ClassicScreen>
   bool _needsReset = false;
   bool _pauseOpen = false;
   int? _selectedSlot;
+  final Map<int, Offset> _trayTouches = {};
   String? _storageNotice;
 
   @override
@@ -377,12 +379,26 @@ class _ClassicScreenState extends State<ClassicScreen>
                 final piece = state.tray[index];
                 return Expanded(child: Center(
                   child: piece == null ? const SizedBox(width: 64, height: 64) :
-                  GestureDetector(
+                  Listener(
                     key: ValueKey('tray-select-$index'),
                     behavior: HitTestBehavior.opaque,
-                    onTap: () => setState(() {
-                      _selectedSlot = _selectedSlot == index ? null : index;
-                    }),
+                    // Passive raw-pointer tap selection cannot win the gesture
+                    // arena against LongPressDraggable on Android. A true drag
+                    // moves much farther than 16dp and is never treated as tap.
+                    onPointerDown: (PointerDownEvent event) {
+                      _trayTouches[event.pointer] = event.position;
+                    },
+                    onPointerUp: (PointerUpEvent event) {
+                      final down = _trayTouches.remove(event.pointer);
+                      if (down == null ||
+                          (event.position - down).distance >= 16) return;
+                      setState(() {
+                        _selectedSlot = _selectedSlot == index ? null : index;
+                      });
+                    },
+                    onPointerCancel: (PointerCancelEvent event) {
+                      _trayTouches.remove(event.pointer);
+                    },
                     child: Semantics(
                     container: true,
                     button: true,
