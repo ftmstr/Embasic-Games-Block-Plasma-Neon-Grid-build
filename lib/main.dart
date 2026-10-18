@@ -122,6 +122,9 @@ class _ClassicScreenState extends State<ClassicScreen>
       };
       _loading = false;
     });
+    // Persist the initially created tray too: force-stop before the first
+    // move should not cause a different seeded tray on the next launch.
+    if (result.status == LoadStatus.empty) _saveCommittedSnapshot();
   }
 
   void _saveCommittedSnapshot() {
@@ -150,18 +153,24 @@ class _ClassicScreenState extends State<ClassicScreen>
   Future<void> _discardIncompatibleSave() async {
     setState(() => _loading = true);
     try {
-      await _repository?.clear();
+      final repository = _repository;
+      if (repository == null) throw StateError('Local storage unavailable');
+      await repository.clear();
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _storageNotice = 'Could not clear old save; storage unavailable';
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        // Never unlock gameplay or save a new snapshot if deletion failed.
+        _needsReset = true;
+        _loading = false;
+        _storageNotice = 'Could not clear saved game; try again';
+      });
+      return;
     }
     if (!mounted) return;
     setState(() {
       state = GameEngine.newGame(seed: DateTime.now().microsecondsSinceEpoch);
       _needsReset = false;
+      _storageNotice = null;
       _loading = false;
     });
     _saveCommittedSnapshot();

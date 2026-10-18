@@ -21,6 +21,7 @@ class FileGameRepository implements GameRepository {
   static const primaryName = 'game-state.json';
   static const backupName = 'game-state.backup.json';
   static const pendingName = 'game-state.pending.json';
+  static const maxSnapshotBytes = 64 * 1024;
 
   final Directory directory;
   Future<void> _tail = Future<void>.value();
@@ -33,6 +34,11 @@ class FileGameRepository implements GameRepository {
   Future<_ReadResult> _read(File file) async {
     if (!await file.exists()) return const _ReadResult(_ReadKind.missing);
     try {
+      // A 64-cell game snapshot should never require a large JSON payload.
+      // Bound malformed reads before allocating/decoding attacker-controlled data.
+      if (await file.length() > maxSnapshotBytes) {
+        return const _ReadResult(_ReadKind.corrupt);
+      }
       final text = await file.readAsString();
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) {
@@ -56,11 +62,18 @@ class FileGameRepository implements GameRepository {
     try {
       await _tail;
       final primary = await _read(_primary);
+      final backup = await _read(_backup);
+      // Do not downgrade data written by a newer version, even when an
+      // older valid backup happens to exist. Require explicit reset instead.
+      if (primary.kind == _ReadKind.unsupported ||
+          backup.kind == _ReadKind.unsupported) {
+        _avoidBackupRotation = true;
+        return const LoadResult(LoadStatus.unsupportedVersion);
+      }
       if (primary.kind == _ReadKind.valid) {
         _avoidBackupRotation = false;
         return LoadResult(LoadStatus.loaded, primary.state);
       }
-      final backup = await _read(_backup);
       if (backup.kind == _ReadKind.valid) {
         _avoidBackupRotation = true;
         return LoadResult(LoadStatus.recovered, backup.state);
@@ -70,10 +83,6 @@ class FileGameRepository implements GameRepository {
         return const LoadResult(LoadStatus.empty);
       }
       _avoidBackupRotation = true;
-      if (primary.kind == _ReadKind.unsupported ||
-          backup.kind == _ReadKind.unsupported) {
-        return const LoadResult(LoadStatus.unsupportedVersion);
-      }
       return const LoadResult(LoadStatus.corrupt);
     } on FileSystemException {
       _avoidBackupRotation = true;
@@ -90,12 +99,31 @@ class FileGameRepository implements GameRepository {
   @override
   Future<void> save(GameState snapshot) => _enqueue(() async {
     await directory.create(recursive: true);
+    // Revalidate existing disk data on every write. Calling save() before
+    // load() must never rotate malformed/future-version primary over good
+    // backup. Unknown newer versions and unrecoverable corruption require
+    // an explicit clear() before a new game may be stored.
+    final primary = await _read(_primary);
+    final backup = await _read(_backup);
+    if (primary.kind == _ReadKind.unsupported ||
+        backup.kind == _ReadKind.unsupported ||
+        (primary.kind != _ReadKind.valid &&
+            backup.kind != _ReadKind.valid &&
+            (primary.kind == _ReadKind.corrupt ||
+             backup.kind == _ReadKind.corrupt))) {
+      throw StateError('Existing save requires explicit reset');
+    }
+    final preserveBackup = _avoidBackupRotation ||
+        (primary.kind != _ReadKind.valid &&
+            backup.kind == _ReadKind.valid);
     final data = jsonEncode(snapshot.toJson());
     await _pending.writeAsString(data, flush: true);
-    if (_avoidBackupRotation) {
-      // Keep the verified backup safe after recovery from a bad primary.
+    if (preserveBackup) {
+      // The old primary is invalid/missing; never replace the valid backup.
       if (await _primary.exists()) await _primary.delete();
-    } else if (await _primary.exists()) {
+    } else if (primary.kind == _ReadKind.valid) {
+      // The primary is verified before it can replace the older backup.
+      // If interrupted after rename, load() recovers from backup.
       if (await _backup.exists()) await _backup.delete();
       await _primary.rename(_backup.path);
     }
