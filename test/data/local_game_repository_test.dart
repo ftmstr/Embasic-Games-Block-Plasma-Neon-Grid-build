@@ -162,6 +162,111 @@ void main() {
     expect(() => GameState.fromJson(badRng), throwsFormatException);
   });
 
+  test('SAVE-13 future-version primary must supersede valid old backup', () async {
+    final old = afterFirstMove(14);
+    await repository.save(old);
+    final newer = old.toJson()..['schemaVersion'] = 2;
+    await primary().writeAsString(jsonEncode(newer));
+    final loaded = await FileGameRepository(directory).load();
+    expect(loaded.status, LoadStatus.unsupportedVersion);
+    expect(loaded.state, isNull);
+    expect(jsonDecode(await primary().readAsString()), newer);
+    expectSame(GameState.fromJson(
+      jsonDecode(await backup().readAsString()) as Map<String, dynamic>,
+    ), old);
+  });
+
+  test('SAVE-14 uninspected unsupported primary refuses save', () async {
+    final newer = afterFirstMove(44).toJson()..['schemaVersion'] = 2;
+    await primary().writeAsString(jsonEncode(newer));
+    await expectLater(repository.save(afterFirstMove(12)), throwsStateError);
+    expect(jsonDecode(await primary().readAsString()), newer);
+  });
+
+  test('SAVE-15 pre-load save cannot overwrite valid backup with corrupt primary', () async {
+    final good = afterFirstMove(16);
+    await repository.save(good);
+    await repository.save(afterFirstMove(67));
+    await primary().writeAsString('broken main');
+    final fresh = FileGameRepository(directory);
+    await fresh.save(afterFirstMove(24));
+    final backupMap = jsonDecode(await backup().readAsString()) as Map<String, dynamic>;
+    expectSame(GameState.fromJson(backupMap), good);
+  });
+
+  test('SAVE-16 interrupted rotation backup survives with orphan pending', () async {
+    final verified = afterFirstMove(91);
+    await backup().writeAsString(jsonEncode(verified.toJson()));
+    await pending().writeAsString(jsonEncode(afterFirstMove(27).toJson()));
+    final loaded = await FileGameRepository(directory).load();
+    expect(loaded.status, LoadStatus.recovered);
+    expectSame(loaded.state, verified);
+  });
+
+  test('SAVE-17 malformed JSON record or invalid board restores backup', () async {
+    final verified = afterFirstMove(91);
+    await repository.save(verified);
+    await repository.save(afterFirstMove(27));
+    final tampered = afterFirstMove(27).toJson()
+      ..['board'] = List<int?>.filled(64, 99);
+    await primary().writeAsString(jsonEncode(tampered));
+    final loaded = await FileGameRepository(directory).load();
+    expect(loaded.status, LoadStatus.recovered);
+    expectSame(loaded.state, verified);
+  });
+
+  test('SAVE-18 oversized primary payload is rejected before decoding', () async {
+    final safe = afterFirstMove(19);
+    await repository.save(safe);
+    await repository.save(afterFirstMove(29));
+    await primary().writeAsString(' ' * (1024 * 128));
+    final recovered = await FileGameRepository(directory).load();
+    expect(recovered.status, LoadStatus.recovered);
+    expectSame(recovered.state, safe);
+  });
+
+  test('SAVE-19 rng and tray refill reproduce across a process restart', () async {
+    final start = GameEngine.newGame(seed: 23456789);
+    final a = GameEngine.applyMove(start, MoveAction(
+      trayIndex: 0, row: 0, col: 0, expectedTurnId: start.turnId,
+    )).state;
+    await repository.save(a);
+    var restored = (await FileGameRepository(directory).load()).state!;
+    var uninterrupted = a;
+    final beforeRng = a.rngState;
+    // The first piece was consumed; placing the other two refills all 3.
+    for (final slot in [1, 2]) {
+      var done = false;
+      for (var row = 0; row < 8 && !done; row++) {
+        for (var col = 0; col < 8; col++) {
+          final piece = uninterrupted.tray[slot];
+          if (piece != null && GameEngine.canPlace(uninterrupted, piece, row, col)) {
+            final move = MoveAction(trayIndex: slot, row: row, col: col,
+                expectedTurnId: uninterrupted.turnId);
+            uninterrupted = GameEngine.applyMove(uninterrupted, move).state;
+            restored = GameEngine.applyMove(restored, move).state;
+            done = true;
+            break;
+          }
+        }
+      }
+      expect(done, isTrue);
+    }
+    expect(restored.rngState, isNot(beforeRng));
+    expectSame(restored, uninterrupted);
+    expect(restored.tray.whereType<Piece>(), hasLength(3));
+  });
+
+  test('SAVE-20 corrupt primary and future-version backup require explicit reset', () async {
+    await primary().writeAsString('{broken');
+    final version2 = afterFirstMove(13).toJson()..['schemaVersion'] = 2;
+    await backup().writeAsString(jsonEncode(version2));
+    final result = await repository.load();
+    expect(result.status, LoadStatus.unsupportedVersion);
+    await expectLater(repository.save(afterFirstMove(44)), throwsStateError);
+    expect(jsonDecode(await backup().readAsString()), version2);
+  });
+
   test('SAVE-12 clear existing save allows starting a fresh game', () async {
     await repository.save(afterFirstMove(93));
     await repository.clear();
