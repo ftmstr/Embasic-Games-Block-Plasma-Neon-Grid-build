@@ -86,11 +86,19 @@ jobs:
         with:
           name: block-plasma-android-debug-${{ github.run_number }}
           path: downloaded-apk
-      - name: Enable Linux KVM acceleration
+      - name: Verify accelerated KVM is usable before emulator boot
+        shell: bash
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm""' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          set -euo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::GitHub runner has no /dev/kvm; cannot run accelerated Android emulator"
+            exit 1
+          fi
+          sudo chmod a+rw /dev/kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+          echo "EMULATOR-KVM-PERMISSIONS-PASS"
       - name: Boot API 35 emulator and check cold-relaunch restore
         uses: reactivecircus/android-emulator-runner@v2
         with:
