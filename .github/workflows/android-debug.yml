@@ -52,11 +52,12 @@ jobs:
           count=0
           while IFS= read -r -d '' file; do
             case "$file" in
-              pubspec.lock|android/.gitignore|android/gradle.properties|android/settings.gradle.kts|android/build.gradle.kts|android/app/build.gradle.kts|android/gradle/wrapper/gradle-wrapper.properties|android/gradle/wrapper/gradle-wrapper.jar|android/app/src/main/AndroidManifest.xml|android/app/src/debug/AndroidManifest.xml|android/app/src/profile/AndroidManifest.xml|android/app/src/main/kotlin/*|android/app/src/main/res/*) ;;
+              pubspec.lock|.metadata|android/.gitignore|android/gradlew|android/gradlew.bat|android/gradle.properties|android/settings.gradle.kts|android/build.gradle.kts|android/app/build.gradle.kts|android/gradle/wrapper/gradle-wrapper.properties|android/gradle/wrapper/gradle-wrapper.jar|android/app/src/main/AndroidManifest.xml|android/app/src/debug/AndroidManifest.xml|android/app/src/profile/AndroidManifest.xml|android/app/src/main/kotlin/*|android/app/src/main/res/*) ;;
               *) continue ;;
             esac
             [[ -f "$file" ]] || continue
             [[ $(stat -c %s "$file") -le 160000 ]] || { echo "SCF-ERROR Oversize file"; exit 3; }
+            echo "SCF-MODE:$file:$(stat -c %a "$file")"
             echo "SCF-BEGIN:$file"
             base64 -w 120 "$file"
             echo
