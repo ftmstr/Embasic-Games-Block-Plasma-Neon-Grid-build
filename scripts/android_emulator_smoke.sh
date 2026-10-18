@@ -131,7 +131,12 @@ read -r from_x from_y <<< "$origin"
 read -r to_x to_y <<< "$destination"
 echo "DRAG-POINTER-FROM $from_x $from_y TO $to_x $to_y"
 adb shell input touchscreen draganddrop "$from_x" "$from_y" "$to_x" "$to_y" 1800
-wait_ui 'SCORE 78'
+if ! wait_ui 'SCORE 78'; then
+  echo 'SMOKE-DRAG-FAIL: capturing the untouched/changed game state'
+  capture_screen 'diagnostic-failed-native-drag'
+  adb shell run-as "$PACKAGE" cat files/game-state.json || true
+  exit 1
+fi
 echo 'SMOKE-REAL-DRAG-UI-SCORE-78-PASS'
 
 verify_drag_save() {

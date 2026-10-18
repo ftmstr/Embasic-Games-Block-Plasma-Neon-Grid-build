@@ -176,6 +176,8 @@ void main() {
     final drag = tester.widget<LongPressDraggable<int>>(
         find.byType(LongPressDraggable<int>).first);
     expect(drag.feedback, isA<Transform>());
+    expect(drag.dragAnchorStrategy, same(pointerDragAnchorStrategy));
+    expect(drag.feedbackOffset, Offset.zero);
     final transform = drag.feedback as Transform;
     final point = MatrixUtils.transformPoint(transform.transform, Offset.zero);
     expect(point.dy, -44);

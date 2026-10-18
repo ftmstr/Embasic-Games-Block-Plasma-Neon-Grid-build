@@ -404,6 +404,10 @@ class _ClassicScreenState extends State<ClassicScreen>
                     selected: _selectedSlot == index,
                     label: 'Tray slot ${index + 1}',
                     child: LongPressDraggable<int>(
+                    // The drag hit-test follows the finger, not the raised
+                    // visual feedback. Required for precise Android cells.
+                    dragAnchorStrategy: pointerDragAnchorStrategy,
+                    feedbackOffset: Offset.zero,
                     data: index,
                     feedback: Transform.translate(
                       offset: const Offset(0, -44),
