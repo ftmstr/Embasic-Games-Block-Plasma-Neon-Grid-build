@@ -138,7 +138,7 @@ void main() {
     }
     expect(expected, isNotNull);
     expectSame(actual!.state, expected!.state);
-    expect(actual!.state.rngState, expected!.state.rngState);
+    expect(actual.state.rngState, expected.state.rngState);
   });
 
   test('SAVE-10 stale turn after reload does not modify snapshot', () async {
