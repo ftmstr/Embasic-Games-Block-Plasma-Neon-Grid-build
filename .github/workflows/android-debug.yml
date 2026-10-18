@@ -110,6 +110,23 @@ jobs:
           emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash scripts/android_emulator_smoke.sh
 
+      - name: Verify genuine Android emulator screenshots
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find android-gameplay-screens -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 3
+          find android-gameplay-screens -type f -name '*.png' -print0 | xargs -0 sha256sum | tee android-gameplay-screens/SHA256SUMS.txt
+          git rev-parse HEAD | tee android-gameplay-screens/SOURCE_HEAD.txt
+      - name: Publish original Android emulator gameplay captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-plasma-android-screen-captures-${{ github.run_number }}
+          path: android-gameplay-screens/
+          if-no-files-found: warn
+          retention-days: 14
+
   flutter-screenshots:
     name: Capture original Flutter gameplay frames
     runs-on: ubuntu-latest
