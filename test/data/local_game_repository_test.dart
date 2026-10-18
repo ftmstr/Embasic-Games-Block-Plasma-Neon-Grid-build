@@ -165,6 +165,7 @@ void main() {
   test('SAVE-13 future-version primary must supersede valid old backup', () async {
     final old = afterFirstMove(14);
     await repository.save(old);
+    await repository.save(old); // Establish valid rollback backup.
     final newer = old.toJson()..['schemaVersion'] = 2;
     await primary().writeAsString(jsonEncode(newer));
     final loaded = await FileGameRepository(directory).load();
