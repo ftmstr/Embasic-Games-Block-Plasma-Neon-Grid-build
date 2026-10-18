@@ -1,0 +1,68 @@
+name: Block Plasma Android Debug CI
+on:
+  push:
+    branches: [main, 'feat/**', 'chore/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: block-plasma-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout clean Build repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install approved Flutter release
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.7'
+          cache: true
+      - name: Capture SDK versions
+        run: |
+          flutter --version
+          dart --version
+          java -version
+          flutter doctor -v
+      - name: Generate Android-only scaffold without overwriting source
+        run: |
+          cp pubspec.yaml /tmp/block-plasma-pubspec-original.yaml
+          cp lib/main.dart /tmp/block-plasma-main-original.dart
+          flutter create --platforms=android --org com.embasicgames --project-name block_plasma_neon_grid .
+          cmp pubspec.yaml /tmp/block-plasma-pubspec-original.yaml
+          cmp lib/main.dart /tmp/block-plasma-main-original.dart
+      - name: Resolve dependency graph
+        run: flutter pub get
+      - name: Static analysis
+        run: flutter analyze
+      - name: Automated unit and widget tests
+        run: flutter test --reporter expanded
+      - name: Compile Android debug APK
+        run: flutter build apk --debug
+      - name: Record verified APK SHA-256
+        run: |
+          mkdir -p checksums
+          sha256sum build/app/outputs/flutter-apk/app-debug.apk | tee checksums/SHA256SUMS.txt
+          git rev-parse HEAD | tee checksums/source-head.txt
+      - name: Publish debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-plasma-android-debug-${{ github.run_number }}
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            checksums/SHA256SUMS.txt
+            checksums/source-head.txt
+          if-no-files-found: error
+          retention-days: 14
