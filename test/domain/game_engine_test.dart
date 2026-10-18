@@ -26,7 +26,8 @@ void main() {
       expect(PieceCatalog.all.map((p) => p.id).toSet(), hasLength(15));
     });
     test('03 — placing valid single adds 5 points and consumes slot', () {
-      final r = put(fixture());
+      final r = put(fixture(tray: [PieceCatalog.byId('single'),
+          PieceCatalog.byId('double_h'), null]));
       expect(r.accepted, isTrue);
       expect(r.state.board[0], isNotNull);
       expect(r.state.tray[0], isNull);
