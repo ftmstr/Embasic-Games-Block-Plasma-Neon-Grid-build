@@ -62,7 +62,7 @@ jobs:
             echo
             echo "SCF-END:$file"
             count=$((count+1))
-          done < <(find android -type f -print0; printf '%s\\0' pubspec.lock)
+          done < <(find android pubspec.lock -type f -print0)
           echo "SCF-FILES:$count"
       - name: Static analysis
         run: flutter analyze
