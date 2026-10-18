@@ -138,7 +138,9 @@ void main() {
     });
     test('20 — no available piece implies game over after legal move', () {
       final b = List<int?>.filled(64, 1)..[0] = null;
-      for (var n = 1; n < 8; n++) { b[n * 8 + n] = null; }
+      for (var n = 1; n < 7; n++) { b[n * 8 + n] = null; }
+      b[7] = null;
+      b[56] = null;
       final s = fixture(board: b, tray: [PieceCatalog.byId('single'),
           PieceCatalog.byId('square2'), null]);
       final result = put(s);
