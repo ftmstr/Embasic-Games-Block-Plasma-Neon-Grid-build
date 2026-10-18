@@ -176,3 +176,30 @@ assert before==after, 'cold relaunch changed committed state'
 PY
 capture_screen "05-real-android-gameplay-drag-restored"
 echo 'SMOKE-REAL-DRAG-RELAUNCH-RNG-TURN-BOARD-PASS'
+
+
+# Device-size QA: force well-defined dp-like viewport via 160dpi. The
+# canonical dimensions come from 05 UI Design and 09 QA plans.
+for viewport in '320 640' '360 800' '393 873' '412 915'; do
+  read -r width height <<< "$viewport"
+  adb shell wm size "${width}x${height}"
+  adb shell wm density 160
+  sleep 2
+  wait_ui 'SCORE 78'
+  wait_ui 'Drop cell row 8 column 8'
+  wait_ui 'Tray slot 2'
+  capture_screen "responsive-${width}x${height}"
+  python3 - "$SHOT_DIR/responsive-${width}x${height}.png" "$width" "$height" <<'PY'
+import struct,sys
+path,width,height=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+with open(path,'rb') as f:
+    png=f.read(24)
+assert png[:8] == bytes.fromhex('89504e470d0a1a0a')
+assert struct.unpack('>II',png[16:24]) == (width,height), (
+    'screenshot size mismatch',png[16:24],width,height)
+print('EMULATOR-RESPONSIVE-VIEWPORT-PASS',width,height)
+PY
+done
+adb shell wm size reset
+adb shell wm density reset
+echo 'EMULATOR-ALL-RESPONSIVE-SIZES-PASS'

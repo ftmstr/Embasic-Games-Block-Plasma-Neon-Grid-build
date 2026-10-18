@@ -115,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find android-gameplay-screens -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 5
+          test "$(find android-gameplay-screens -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 9
           find android-gameplay-screens -type f -name '*.png' -print0 | xargs -0 sha256sum | tee android-gameplay-screens/SHA256SUMS.txt
           git rev-parse HEAD | tee android-gameplay-screens/SOURCE_HEAD.txt
       - name: Publish original Android emulator gameplay captures

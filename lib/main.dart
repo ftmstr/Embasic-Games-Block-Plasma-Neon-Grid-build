@@ -32,9 +32,10 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
         body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
+          child: SingleChildScrollView(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const Text('EMBASIC GAMES', style: TextStyle(
                     letterSpacing: 5, color: PlasmaColors.secondary, fontSize: 13)),
@@ -48,6 +49,7 @@ class HomeScreen extends StatelessWidget {
                     letterSpacing: 5, color: PlasmaColors.cyan)),
                 const SizedBox(height: 48),
                 FilledButton.icon(
+                  style: FilledButton.styleFrom(minimumSize: const Size(160, 48)),
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
                       builder: (_) => ClassicScreen(repository: repository))),
                   icon: const Icon(Icons.play_arrow),
@@ -55,6 +57,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 TextButton(
+                  style: TextButton.styleFrom(minimumSize: const Size(150, 48)),
                   onPressed: () => showDialog<void>(context: context,
                     builder: (_) => const AlertDialog(title: Text('HOW TO PLAY'),
                       content: Text('Drag a piece from the tray onto empty cells. '
@@ -65,6 +68,7 @@ class HomeScreen extends StatelessWidget {
                 const Text('Offline Classic • Early development build',
                     style: TextStyle(color: PlasmaColors.secondary)),
               ]),
+              ),
             ),
           ),
         ),
@@ -87,6 +91,8 @@ class _ClassicScreenState extends State<ClassicScreen>
   GameRepository? _repository;
   bool _loading = true;
   bool _needsReset = false;
+  bool _pauseOpen = false;
+  int? _selectedSlot;
   String? _storageNotice;
 
   @override
@@ -187,7 +193,10 @@ class _ClassicScreenState extends State<ClassicScreen>
     final result = GameEngine.applyMove(state, MoveAction(
         trayIndex: slot, row: row, col: col, expectedTurnId: state.turnId));
     if (result.accepted) {
-      setState(() => state = result.state);
+      setState(() {
+        state = result.state;
+        _selectedSlot = null;
+      });
       _saveCommittedSnapshot();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -197,27 +206,77 @@ class _ClassicScreenState extends State<ClassicScreen>
   }
 
   void restart() {
-    setState(() => state = GameEngine.newGame(
-        seed: DateTime.now().microsecondsSinceEpoch,
-        bestScore: state.bestScore));
+    setState(() {
+      state = GameEngine.newGame(
+          seed: DateTime.now().microsecondsSinceEpoch,
+          bestScore: state.bestScore);
+      _selectedSlot = null;
+    });
     _saveCommittedSnapshot();
+  }
+
+  Future<void> _showPause() async {
+    if (_pauseOpen) return;
+    _pauseOpen = true;
+    _saveCommittedSnapshot();
+    try {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('PAUSED'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'continue'),
+              child: const Text('CONTINUE'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'restart'),
+              child: const Text('RESTART'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'home'),
+              child: const Text('HOME'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (choice == 'restart') {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('CONFIRM RESTART'),
+            content: const Text('Start a new game? The current board will be lost.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('CANCEL'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('RESTART GAME'),
+              ),
+            ],
+          ),
+        );
+        if (mounted && confirmed == true) restart();
+      } else if (choice == 'home' && mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _pauseOpen = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('CLASSIC'),
           backgroundColor: PlasmaColors.background,
-          actions: [IconButton(icon: const Icon(Icons.pause),
-            tooltip: 'Pause', onPressed: () => showDialog<void>(
-              context: context, builder: (dialogContext) => AlertDialog(
-                title: const Text('PAUSED'), actions: [
-                  TextButton(onPressed: () => Navigator.pop(dialogContext),
-                    child: const Text('CONTINUE')),
-                  TextButton(onPressed: () {
-                    Navigator.pop(dialogContext);
-                    restart();
-                  }, child: const Text('RESTART')),
-                ])))],
+          actions: [IconButton(
+            icon: const Icon(Icons.pause),
+            tooltip: 'Pause',
+            onPressed: _showPause,
+          )],
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -242,9 +301,13 @@ class _ClassicScreenState extends State<ClassicScreen>
                     ]),
                   )))
                 : SafeArea(child: LayoutBuilder(builder: (context, constraints) {
-          final boardSize = (constraints.maxWidth - 24).clamp(0.0,
-              constraints.maxHeight - 220 > 0 ? constraints.maxHeight - 220 : 0.0).toDouble();
-          return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          final heightBudget = constraints.maxHeight -
+              (state.gameOver ? 325 : 245);
+          final boardSize = (constraints.maxWidth - 32).clamp(
+            0.0, heightBudget > 0 ? heightBudget : 0.0,
+          ).toDouble();
+          return SingleChildScrollView(
+              child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
             Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [Text('BEST ${state.bestScore}',
@@ -273,8 +336,15 @@ class _ClassicScreenState extends State<ClassicScreen>
                       final legal = targetPiece != null && GameEngine.canPlace(state, targetPiece, row, col);
                       final colorIndex = state.board[index];
                       final base = colorIndex == null ? PlasmaColors.empty : PlasmaColors.block(colorIndex);
-                      return Semantics(
+                      return GestureDetector(
+                        key: ValueKey('board-tap-$index'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _selectedSlot == null || state.gameOver
+                            ? null
+                            : () => place(_selectedSlot!, row, col),
+                        child: Semantics(
                         container: true,
+                        button: true,
                         label: 'Drop cell row ${row + 1} column ${col + 1}',
                         child: Container(
                         margin: const EdgeInsets.all(1.5),
@@ -291,6 +361,7 @@ class _ClassicScreenState extends State<ClassicScreen>
                             color: base.withValues(alpha: 0.25), blurRadius: 6)],
                         ),
                         ),
+                        ),
                       );
                     });
                 },
@@ -304,16 +375,27 @@ class _ClassicScreenState extends State<ClassicScreen>
                 final piece = state.tray[index];
                 return Expanded(child: Center(
                   child: piece == null ? const SizedBox(width: 64, height: 64) :
-                  Semantics(
+                  GestureDetector(
+                    key: ValueKey('tray-select-$index'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => setState(() {
+                      _selectedSlot = _selectedSlot == index ? null : index;
+                    }),
+                    child: Semantics(
                     container: true,
+                    button: true,
+                    selected: _selectedSlot == index,
                     label: 'Tray slot ${index + 1}',
                     child: LongPressDraggable<int>(
                     data: index,
-                    feedback: Material(color: Colors.transparent,
-                      child: _PiecePreview(piece: piece, size: 18)),
+                    feedback: Transform.translate(
+                      offset: const Offset(0, -44),
+                      child: Material(color: Colors.transparent,
+                        child: _PiecePreview(piece: piece, size: 18))),
                     childWhenDragging: Opacity(opacity: 0.2,
                       child: _PiecePreview(piece: piece, size: 14)),
                     child: _PiecePreview(piece: piece, size: 14),
+                    ),
                     ),
                   ),
                 ));
@@ -327,8 +409,12 @@ class _ClassicScreenState extends State<ClassicScreen>
                 const Text('PLASMA OVERLOAD', style: TextStyle(
                     color: PlasmaColors.warning, fontWeight: FontWeight.bold)),
                 FilledButton(onPressed: restart, child: const Text('RETRY')),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('HOME'),
+                ),
               ])),
-          ]));
+          ])));
         })),
       );
 }
