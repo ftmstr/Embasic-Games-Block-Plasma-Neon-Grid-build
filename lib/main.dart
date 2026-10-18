@@ -128,7 +128,7 @@ class _ClassicScreenState extends State<ClassicScreen> {
                     onWillAcceptWithDetails: (_) => !state.gameOver,
                     onAcceptWithDetails: (details) => place(details.data, row, col),
                     builder: (context, candidateData, rejectedData) {
-                      final targetPiece = candidateData.isEmpty ? null : state.tray[candidateData.first];
+                      final targetPiece = candidateData.isEmpty ? null : state.tray[candidateData.first!];
                       final legal = targetPiece != null && GameEngine.canPlace(state, targetPiece, row, col);
                       final colorIndex = state.board[index];
                       final base = colorIndex == null ? PlasmaColors.empty : PlasmaColors.block(colorIndex);
