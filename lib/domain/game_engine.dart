@@ -67,6 +67,8 @@ class GameState {
         tray = List<Piece?>.unmodifiable(tray) {
     if (board.length != 64 || tray.length != 3 || score < 0 ||
         bestScore < score || combo < 0 || turnId < 0 ||
+        rngState < 0 || rngState > 0xFFFFFFFF ||
+        board.any((c) => c != null && (c < 1 || c > 5)) ||
         tray.any((p) => p != null && !p.isValid)) {
       throw ArgumentError('Invalid game snapshot');
     }

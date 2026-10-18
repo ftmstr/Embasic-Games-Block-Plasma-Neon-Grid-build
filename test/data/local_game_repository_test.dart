@@ -122,7 +122,7 @@ void main() {
     await repository.save(previous);
     final restored = (await FileGameRepository(directory).load()).state!;
     final available = restored.tray.indexWhere((p) => p != null);
-    expect(available, isNonNegative);
+    expect(available, greaterThanOrEqualTo(0));
     MoveResult? expected;
     MoveResult? actual;
     for (var row = 0; row < 8 && expected == null; row++) {
@@ -155,7 +155,8 @@ void main() {
 
   test('SAVE-11 malformed color values and RNG range are rejected', () {
     final snapshot = afterFirstMove(19).toJson();
-    (snapshot['board'] as List<int?>)[0] = 999;
+    snapshot['board'] = List<int?>.of(snapshot['board'] as List<int?>)
+      ..[0] = 999;
     expect(() => GameState.fromJson(snapshot), throwsFormatException);
     final badRng = afterFirstMove(19).toJson()..['rngState'] = -1;
     expect(() => GameState.fromJson(badRng), throwsFormatException);

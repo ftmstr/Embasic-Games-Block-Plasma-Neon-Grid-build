@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'data/game_repository.dart';
+import 'data/game_storage.dart';
 import 'domain/game_engine.dart';
 import 'design/tokens.dart';
 
@@ -64,20 +68,114 @@ class HomeScreen extends StatelessWidget {
 }
 
 class ClassicScreen extends StatefulWidget {
-  const ClassicScreen({super.key});
+  const ClassicScreen({super.key, this.repository});
+
+  /// Optional injected seam for deterministic widget and integration tests.
+  final GameRepository? repository;
 
   @override
   State<ClassicScreen> createState() => _ClassicScreenState();
 }
 
-class _ClassicScreenState extends State<ClassicScreen> {
+class _ClassicScreenState extends State<ClassicScreen>
+    with WidgetsBindingObserver {
   late GameState state = GameEngine.newGame(seed: DateTime.now().microsecondsSinceEpoch);
+  GameRepository? _repository;
+  bool _loading = true;
+  bool _needsReset = false;
+  String? _storageNotice;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_restore());
+  }
+
+  Future<void> _restore() async {
+    GameRepository? repository;
+    LoadResult result;
+    try {
+      repository = widget.repository ?? await AppGameStorage.open();
+      result = repository == null
+          ? const LoadResult(LoadStatus.unavailable)
+          : await repository.load();
+    } catch (_) {
+      result = const LoadResult(LoadStatus.unavailable);
+    }
+    if (!mounted) return;
+    setState(() {
+      _repository = repository;
+      if (result.state != null) state = result.state!;
+      _needsReset = result.status == LoadStatus.unsupportedVersion ||
+          result.status == LoadStatus.corrupt;
+      _storageNotice = switch (result.status) {
+        LoadStatus.recovered => 'Previous game recovered from backup',
+        LoadStatus.corrupt => 'Saved game is damaged; start a new game',
+        LoadStatus.unsupportedVersion => 'Saved game belongs to a newer version',
+        LoadStatus.unavailable => 'Local save unavailable; progress may not persist',
+        _ => null,
+      };
+      _loading = false;
+    });
+  }
+
+  void _saveCommittedSnapshot() {
+    final repository = _repository;
+    if (repository == null || _needsReset) return;
+    // FileGameRepository queues writes, so concurrent drags cannot reorder
+    // completed turns. Never block gameplay on disk I/O.
+    unawaited(repository.save(state).catchError((Object _) {
+      if (!mounted) return;
+      setState(() {
+        _storageNotice = 'Save failed; progress may not persist';
+      });
+    }));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    if (!_loading &&
+        (lifecycle == AppLifecycleState.inactive ||
+            lifecycle == AppLifecycleState.paused ||
+            lifecycle == AppLifecycleState.detached)) {
+      _saveCommittedSnapshot();
+    }
+  }
+
+  Future<void> _discardIncompatibleSave() async {
+    setState(() => _loading = true);
+    try {
+      await _repository?.clear();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _storageNotice = 'Could not clear old save; storage unavailable';
+        });
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      state = GameEngine.newGame(seed: DateTime.now().microsecondsSinceEpoch);
+      _needsReset = false;
+      _loading = false;
+    });
+    _saveCommittedSnapshot();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
 
   void place(int slot, int row, int col) {
     final result = GameEngine.applyMove(state, MoveAction(
         trayIndex: slot, row: row, col: col, expectedTurnId: state.turnId));
     if (result.accepted) {
       setState(() => state = result.state);
+      _saveCommittedSnapshot();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         duration: const Duration(milliseconds: 500),
@@ -85,8 +183,12 @@ class _ClassicScreenState extends State<ClassicScreen> {
     }
   }
 
-  void restart() => setState(() => state = GameEngine.newGame(
-      seed: DateTime.now().microsecondsSinceEpoch, bestScore: state.bestScore));
+  void restart() {
+    setState(() => state = GameEngine.newGame(
+        seed: DateTime.now().microsecondsSinceEpoch,
+        bestScore: state.bestScore));
+    _saveCommittedSnapshot();
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -104,7 +206,29 @@ class _ClassicScreenState extends State<ClassicScreen> {
                   }, child: const Text('RESTART')),
                 ])))],
         ),
-        body: SafeArea(child: LayoutBuilder(builder: (context, constraints) {
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _needsReset
+                ? SafeArea(child: Center(child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          color: PlasmaColors.warning, size: 54),
+                      const SizedBox(height: 14),
+                      Text(_storageNotice ?? 'Saved game cannot be opened',
+                          textAlign: TextAlign.center),
+                      const SizedBox(height: 18),
+                      FilledButton(
+                        onPressed: _discardIncompatibleSave,
+                        child: const Text('START NEW GAME'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('HOME'),
+                      ),
+                    ]),
+                  )))
+                : SafeArea(child: LayoutBuilder(builder: (context, constraints) {
           final boardSize = (constraints.maxWidth - 24).clamp(0.0,
               constraints.maxHeight - 220 > 0 ? constraints.maxHeight - 220 : 0.0).toDouble();
           return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -114,6 +238,10 @@ class _ClassicScreenState extends State<ClassicScreen> {
                     style: const TextStyle(color: PlasmaColors.secondary)),
                   Text('SCORE ${state.score}', style: const TextStyle(
                     fontSize: 18, fontWeight: FontWeight.w800, color: PlasmaColors.cyan))])),
+            if (_storageNotice != null)
+              Text(_storageNotice!, textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 11,
+                      color: PlasmaColors.warning)),
             const SizedBox(height: 12),
             SizedBox(width: boardSize, height: boardSize,
               child: GridView.builder(
