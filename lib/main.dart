@@ -309,7 +309,9 @@ class _ClassicScreenState extends State<ClassicScreen>
           return SingleChildScrollView(
               child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
             Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Wrap(alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12, runSpacing: 6,
                 children: [Text('BEST ${state.bestScore}',
                     style: const TextStyle(color: PlasmaColors.secondary)),
                   Text('SCORE ${state.score}', style: const TextStyle(

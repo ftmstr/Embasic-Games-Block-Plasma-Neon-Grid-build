@@ -111,7 +111,10 @@ void main() {
     await tester.tap(find.text('CANCEL'));
     await tester.pumpAndSettle();
     expect(find.text('SCORE 73'), findsOneWidget);
-    expect(repo.saved, isEmpty);
+    // Pause deliberately persists a verified snapshot. Cancelling restart
+    // must not alter the saved gameplay turn or score.
+    expect(repo.saved, isNotEmpty);
+    expect(repo.saved.every((s) => s.turnId == 9 && s.score == 73), isTrue);
     await tester.tap(find.byTooltip('Pause'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('RESTART'));
@@ -120,7 +123,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('SCORE 0'), findsOneWidget);
     expect(find.text('BEST 100'), findsOneWidget);
-    expect(repo.saved, hasLength(1));
+    expect(repo.saved.last.score, 0);
+    expect(repo.saved.last.bestScore, 100);
   });
 
   testWidgets('UI-QA game-over exposes retry and home without overlay overflow',
