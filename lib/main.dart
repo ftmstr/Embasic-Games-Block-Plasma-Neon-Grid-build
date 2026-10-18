@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
 import 'data/game_repository.dart';
 import 'data/game_storage.dart';
 import 'domain/game_engine.dart';
