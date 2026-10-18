@@ -118,3 +118,61 @@ assert len(state['board'])==64 and len(state['tray'])==3
 print('SMOKE-RNG-TURN-SCHEMA-PASS')
 PY
 echo 'EMULATOR_SAVE_PASS'
+
+
+# Exercise a real Android touchscreen drag after the deterministic restore
+# smoke; never mutate the save JSON to fake an accepted player move.
+wait_ui 'Tray slot 1'
+wait_ui 'Drop cell row 8 column 8'
+capture_ui
+origin="$(locate_ui 'Tray slot 1')"
+destination="$(locate_ui 'Drop cell row 8 column 8')"
+read -r from_x from_y <<< "$origin"
+read -r to_x to_y <<< "$destination"
+echo "DRAG-POINTER-FROM $from_x $from_y TO $to_x $to_y"
+adb shell input touchscreen draganddrop "$from_x" "$from_y" "$to_x" "$to_y" 1800
+wait_ui 'SCORE 78'
+echo 'SMOKE-REAL-DRAG-UI-SCORE-78-PASS'
+
+verify_drag_save() {
+  local output="$1"
+  for _ in $(seq 1 12); do
+    adb shell run-as "$PACKAGE" cat files/game-state.json > "$output"
+    if python3 - "$output" <<'PY'
+import json,sys
+with open(sys.argv[1], encoding="utf-8") as f: s=json.load(f)
+assert s['schemaVersion']==1 and s['score']==78 and s['bestScore']==100
+assert s['turnId']==10 and s['rngState']==314159265 and s['combo']==0
+assert len(s['board'])==64 and s['board'][0]==1 and s['board'][63]==1
+assert sum(v is not None for v in s['board'])==2
+assert s['tray']==[None,'double_h','triple_v']
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "SMOKE-FAIL: actual draggable did not produce canonical saved move"
+  return 1
+}
+verify_drag_save "$TMP/drag-committed.json"
+echo 'SMOKE-REAL-DRAG-DISK-SNAPSHOT-PASS'
+capture_screen "04-real-android-gameplay-after-drag"
+
+adb shell am force-stop "$PACKAGE"
+adb shell am start -W -n "$ACTIVITY"
+wait_ui 'PLAY'
+capture_ui
+click="$(locate_ui 'PLAY')"
+read -r replay_x replay_y <<< "$click"
+adb shell input tap "$replay_x" "$replay_y"
+wait_ui 'SCORE 78'
+verify_drag_save "$TMP/drag-relaunched.json"
+python3 - "$TMP/drag-committed.json" "$TMP/drag-relaunched.json" <<'PY'
+import json,sys
+with open(sys.argv[1], encoding='utf-8') as f: before=json.load(f)
+with open(sys.argv[2], encoding='utf-8') as f: after=json.load(f)
+assert before==after, 'cold relaunch changed committed state'
+PY
+capture_screen "05-real-android-gameplay-drag-restored"
+echo 'SMOKE-REAL-DRAG-RELAUNCH-RNG-TURN-BOARD-PASS'

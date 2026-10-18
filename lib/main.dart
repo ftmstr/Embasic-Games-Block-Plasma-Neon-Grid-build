@@ -273,7 +273,10 @@ class _ClassicScreenState extends State<ClassicScreen>
                       final legal = targetPiece != null && GameEngine.canPlace(state, targetPiece, row, col);
                       final colorIndex = state.board[index];
                       final base = colorIndex == null ? PlasmaColors.empty : PlasmaColors.block(colorIndex);
-                      return Container(
+                      return Semantics(
+                        container: true,
+                        label: 'Drop cell row ${row + 1} column ${col + 1}',
+                        child: Container(
                         margin: const EdgeInsets.all(1.5),
                         decoration: BoxDecoration(
                           color: candidateData.isNotEmpty
@@ -286,6 +289,7 @@ class _ClassicScreenState extends State<ClassicScreen>
                             : PlasmaColors.gridStroke, width: 1),
                           boxShadow: colorIndex == null ? null : [BoxShadow(
                             color: base.withValues(alpha: 0.25), blurRadius: 6)],
+                        ),
                         ),
                       );
                     });
@@ -300,13 +304,17 @@ class _ClassicScreenState extends State<ClassicScreen>
                 final piece = state.tray[index];
                 return Expanded(child: Center(
                   child: piece == null ? const SizedBox(width: 64, height: 64) :
-                  LongPressDraggable<int>(
+                  Semantics(
+                    container: true,
+                    label: 'Tray slot ${index + 1}',
+                    child: LongPressDraggable<int>(
                     data: index,
                     feedback: Material(color: Colors.transparent,
                       child: _PiecePreview(piece: piece, size: 18)),
                     childWhenDragging: Opacity(opacity: 0.2,
                       child: _PiecePreview(piece: piece, size: 14)),
                     child: _PiecePreview(piece: piece, size: 14),
+                    ),
                   ),
                 ));
               }),

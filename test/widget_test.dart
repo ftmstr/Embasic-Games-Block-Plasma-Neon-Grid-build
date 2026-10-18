@@ -84,6 +84,48 @@ void main() {
     expect(fake.saved.last.toJson(), saved.toJson());
   });
 
+  testWidgets('Real long-press drag into last grid cell saves exact next turn',
+      (tester) async {
+    final board = List<int?>.filled(64, null)..[0] = 1;
+    final before = GameState(
+      board: board,
+      tray: [
+        PieceCatalog.byId('single'),
+        PieceCatalog.byId('double_h'),
+        PieceCatalog.byId('triple_v'),
+      ],
+      score: 73,
+      bestScore: 100,
+      combo: 0,
+      rngState: 314159265,
+      turnId: 9,
+    );
+    final fake = _FakeRepository(LoadResult(LoadStatus.loaded, before));
+    await tester.pumpWidget(MaterialApp(
+        home: ClassicScreen(repository: fake)));
+    await tester.pumpAndSettle();
+
+    final origin = find.byType(LongPressDraggable<int>).first;
+    final destination = find.byType(DragTarget<int>).at(63);
+    final finger = await tester.startGesture(tester.getCenter(origin));
+    await tester.pump(const Duration(milliseconds: 850));
+    await finger.moveTo(tester.getCenter(destination));
+    await tester.pump(const Duration(milliseconds: 200));
+    await finger.up();
+    await tester.pumpAndSettle();
+
+    expect(fake.saved, isNotEmpty);
+    final after = fake.saved.last;
+    expect(after.score, 78);
+    expect(after.board[0], 1);
+    expect(after.board[63], 1);
+    expect(after.tray[0], isNull);
+    expect(after.turnId, 10);
+    expect(after.rngState, 314159265);
+    expect(after.bestScore, 100);
+    expect(find.text('SCORE 78'), findsOneWidget);
+  });
+
   testWidgets('Home opens classic 8 by 8 grid and three pieces', (tester) async {
     await tester.pumpWidget(BlockPlasmaApp(
       repository: _FakeRepository(const LoadResult(LoadStatus.empty)),
