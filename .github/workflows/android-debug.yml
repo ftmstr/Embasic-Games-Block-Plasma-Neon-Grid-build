@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: block-plasma-${{ github.workflow }}-${{ github.ref }}
+  group: block-plasma-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 jobs:
   android-debug:
