@@ -109,3 +109,45 @@ jobs:
           disable-animations: true
           emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash scripts/android_emulator_smoke.sh
+
+  flutter-screenshots:
+    name: Capture original Flutter gameplay frames
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact original Flutter sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.7'
+          cache: true
+      - name: Resolve locked dependencies
+        run: |
+          flutter pub get
+          git diff --exit-code -- pubspec.lock
+      - name: Render and capture actual Flutter UI (not AI images)
+        run: flutter test --update-goldens --reporter expanded tool/capture_gameplay_test.dart
+      - name: Verify screenshots and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find tool/goldens -maxdepth 1 -name '*.png' -type f | wc -l)" -eq 4
+          find tool/goldens -maxdepth 1 -name '*.png' -type f -print0 | xargs -0 -n1 file
+          find tool/goldens -maxdepth 1 -name '*.png' -type f -print0 | xargs -0 sha256sum | tee screenshot-sha256.txt
+          git rev-parse HEAD | tee screenshot-source-head.txt
+      - name: Publish real Flutter renderer screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-plasma-flutter-screens-${{ github.run_number }}
+          path: |
+            tool/goldens/*.png
+            screenshot-sha256.txt
+            screenshot-source-head.txt
+          if-no-files-found: error
+          retention-days: 14
