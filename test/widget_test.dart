@@ -54,7 +54,9 @@ void main() {
   });
 
   testWidgets('Home opens classic 8 by 8 grid and three pieces', (tester) async {
-    await tester.pumpWidget(const BlockPlasmaApp());
+    await tester.pumpWidget(BlockPlasmaApp(
+      repository: _FakeRepository(const LoadResult(LoadStatus.empty)),
+    ));
     expect(find.text('BLOCK PLASMA'), findsOneWidget);
     await tester.tap(find.text('PLAY'));
     await tester.pumpAndSettle();

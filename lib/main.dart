@@ -9,7 +9,9 @@ import 'design/tokens.dart';
 void main() => runApp(const BlockPlasmaApp());
 
 class BlockPlasmaApp extends StatelessWidget {
-  const BlockPlasmaApp({super.key});
+  const BlockPlasmaApp({super.key, this.repository});
+
+  final GameRepository? repository;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -18,12 +20,14 @@ class BlockPlasmaApp extends StatelessWidget {
         theme: ThemeData(brightness: Brightness.dark, useMaterial3: true,
           scaffoldBackgroundColor: PlasmaColors.background,
           colorSchemeSeed: PlasmaColors.cyan),
-        home: const HomeScreen(),
+        home: HomeScreen(repository: repository),
       );
 }
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.repository});
+
+  final GameRepository? repository;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -45,7 +49,7 @@ class HomeScreen extends StatelessWidget {
                 const SizedBox(height: 48),
                 FilledButton.icon(
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                      builder: (_) => const ClassicScreen())),
+                      builder: (_) => ClassicScreen(repository: repository))),
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('PLAY'),
                 ),
