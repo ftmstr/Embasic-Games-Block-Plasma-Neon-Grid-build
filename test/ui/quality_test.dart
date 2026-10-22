@@ -158,6 +158,25 @@ void main() {
     expect(repo.saved, isEmpty);
   });
 
+  testWidgets('UI-QA valid long-press drag commits exactly one turn',
+      (tester) async {
+    _screen(tester, 393, 873);
+    final repo = _MemoryGameRepository(_fixture());
+    await _buildClassic(tester, repo);
+    final finger = await tester.startGesture(
+        tester.getCenter(find.byType(LongPressDraggable<int>).first));
+    await tester.pump(const Duration(milliseconds: 850));
+    await finger.moveTo(tester.getCenter(find.byType(DragTarget<int>).last));
+    await tester.pump(const Duration(milliseconds: 200));
+    await finger.up();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('SCORE 78'), findsOneWidget);
+    expect(repo.saved, hasLength(1));
+    expect(repo.saved.single.turnId, 10);
+    expect(repo.saved.single.board[63], 1);
+  });
+
   testWidgets('UI-QA selecting a tray slot then tapping a legal cell commits',
       (tester) async {
     final repo = _MemoryGameRepository(_fixture());
