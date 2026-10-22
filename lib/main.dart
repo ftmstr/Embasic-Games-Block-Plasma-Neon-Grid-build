@@ -94,6 +94,8 @@ class _ClassicScreenState extends State<ClassicScreen>
   bool _pauseOpen = false;
   int? _selectedSlot;
   final Map<int, Offset> _trayTouches = {};
+  final GlobalKey _boardKey = GlobalKey();
+  Offset? _lastDragFinger;
   String? _storageNotice;
 
   @override
@@ -204,6 +206,27 @@ class _ClassicScreenState extends State<ClassicScreen>
         duration: const Duration(milliseconds: 500),
         content: Text('Cannot place piece: ${result.error.name}')));
     }
+  }
+
+  // DragTarget is the primary acceptance path. Certain Android native
+  // gesture sequences may end without a DragTarget acceptance even when
+  // the released finger is inside the board. Recover only that missed drop,
+  // and always delegate legality/turn handling to the pure GameEngine.
+  void _finishDrag(int slot, DraggableDetails details) {
+    final finger = _lastDragFinger;
+    _lastDragFinger = null;
+    if (details.wasAccepted || finger == null || _loading ||
+        _needsReset || state.gameOver) return;
+    final render = _boardKey.currentContext?.findRenderObject();
+    if (render is! RenderBox || !render.hasSize) return;
+    final local = render.globalToLocal(finger);
+    final size = render.size;
+    if (local.dx < 0 || local.dy < 0 ||
+        local.dx >= size.width || local.dy >= size.height ||
+        size.width <= 0 || size.height <= 0) return;
+    final col = (local.dx * 8 / size.width).floor();
+    final row = (local.dy * 8 / size.height).floor();
+    place(slot, row, col);
   }
 
   void restart() {
@@ -322,7 +345,7 @@ class _ClassicScreenState extends State<ClassicScreen>
                   style: const TextStyle(fontSize: 11,
                       color: PlasmaColors.warning)),
             const SizedBox(height: 12),
-            SizedBox(width: boardSize, height: boardSize,
+            SizedBox(key: _boardKey, width: boardSize, height: boardSize,
               child: GridView.builder(
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -408,6 +431,10 @@ class _ClassicScreenState extends State<ClassicScreen>
                     // visual feedback. Required for precise Android cells.
                     dragAnchorStrategy: pointerDragAnchorStrategy,
                     feedbackOffset: Offset.zero,
+                    onDragStarted: () => _lastDragFinger = null,
+                    onDragUpdate: (details) =>
+                        _lastDragFinger = details.globalPosition,
+                    onDragEnd: (details) => _finishDrag(index, details),
                     data: index,
                     feedback: Transform.translate(
                       offset: const Offset(0, -44),
