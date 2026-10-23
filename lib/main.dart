@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'data/game_repository.dart';
 import 'data/game_storage.dart';
 import 'domain/game_engine.dart';
@@ -96,7 +97,40 @@ class _ClassicScreenState extends State<ClassicScreen>
   final Map<int, Offset> _trayTouches = {};
   final GlobalKey _boardKey = GlobalKey();
   Offset? _lastDragFinger;
+  // Captured at the pointer DOWN, not recomputed on callback delivery.
+  // Prevents the raw pointer, DragTarget and onDragEnd paths from
+  // committing the same physical gesture twice (including tray refills).
+  int? _activeDragTurn;
+  int _dragUpdateCount = 0;
   String? _storageNotice;
+
+  void _traceGesture(String event) {
+    if (kDebugMode) {
+      debugPrint('BP-NG-GESTURE $event turn=${state.turnId}');
+    }
+  }
+
+  // Native Android sends pointer UP even if a long-press recognizer loses
+  // the gesture arena to scrolling. The Listener can therefore recover
+  // the actual release coordinate without relying on onDragStarted.
+  void _placeFromGlobal(int slot, Offset finger, int? startTurn) {
+    if (_loading || _needsReset || state.gameOver ||
+        startTurn == null || startTurn != state.turnId) return;
+    final render = _boardKey.currentContext?.findRenderObject();
+    if (render is! RenderBox || !render.hasSize) return;
+    final local = render.globalToLocal(finger);
+    final size = render.size;
+    if (size.width <= 0 || size.height <= 0 ||
+        local.dx < 0 || local.dy < 0 ||
+        local.dx >= size.width || local.dy >= size.height) {
+      _traceGesture('release-outside slot=$slot');
+      return;
+    }
+    final col = (local.dx * 8 / size.width).floor();
+    final row = (local.dy * 8 / size.height).floor();
+    _traceGesture('release-cell slot=$slot row=$row col=$col');
+    place(slot, row, col, expectedTurnId: startTurn);
+  }
 
   @override
   void initState() {
@@ -192,9 +226,16 @@ class _ClassicScreenState extends State<ClassicScreen>
   }
 
 
-  void place(int slot, int row, int col) {
+  void place(int slot, int row, int col, {int? expectedTurnId}) {
+    // A gesture carries its starting turn across all acceptance paths.
+    // A second delivery after a successful commit is silently ignored.
+    if (expectedTurnId != null && expectedTurnId != state.turnId) {
+      _traceGesture('duplicate-suppressed slot=$slot');
+      return;
+    }
     final result = GameEngine.applyMove(state, MoveAction(
-        trayIndex: slot, row: row, col: col, expectedTurnId: state.turnId));
+        trayIndex: slot, row: row, col: col,
+        expectedTurnId: expectedTurnId ?? state.turnId));
     if (result.accepted) {
       setState(() {
         state = result.state;
@@ -215,18 +256,9 @@ class _ClassicScreenState extends State<ClassicScreen>
   void _finishDrag(int slot, DraggableDetails details) {
     final finger = _lastDragFinger;
     _lastDragFinger = null;
-    if (details.wasAccepted || finger == null || _loading ||
-        _needsReset || state.gameOver) return;
-    final render = _boardKey.currentContext?.findRenderObject();
-    if (render is! RenderBox || !render.hasSize) return;
-    final local = render.globalToLocal(finger);
-    final size = render.size;
-    if (local.dx < 0 || local.dy < 0 ||
-        local.dx >= size.width || local.dy >= size.height ||
-        size.width <= 0 || size.height <= 0) return;
-    final col = (local.dx * 8 / size.width).floor();
-    final row = (local.dy * 8 / size.height).floor();
-    place(slot, row, col);
+    _traceGesture('drag-end slot=$slot accepted=${details.wasAccepted} updates=$_dragUpdateCount');
+    if (details.wasAccepted || finger == null) return;
+    _placeFromGlobal(slot, finger, _activeDragTurn);
   }
 
   void restart() {
@@ -356,7 +388,13 @@ class _ClassicScreenState extends State<ClassicScreen>
                   final col = index % 8;
                   return DragTarget<int>(
                     onWillAcceptWithDetails: (_) => !state.gameOver,
-                    onAcceptWithDetails: (details) => place(details.data, row, col),
+                    onAcceptWithDetails: (details) {
+                      _traceGesture('target-accept slot=${details.data} row=$row col=$col');
+                      final capturedTurn = _activeDragTurn;
+                      if (capturedTurn != null) {
+                        place(details.data, row, col, expectedTurnId: capturedTurn);
+                      }
+                    },
                     builder: (context, candidateData, rejectedData) {
                       final targetPiece = candidateData.isEmpty ? null : state.tray[candidateData.first!];
                       final legal = targetPiece != null && GameEngine.canPlace(state, targetPiece, row, col);
@@ -409,16 +447,25 @@ class _ClassicScreenState extends State<ClassicScreen>
                     // moves much farther than 16dp and is never treated as tap.
                     onPointerDown: (PointerDownEvent event) {
                       _trayTouches[event.pointer] = event.position;
+                      _activeDragTurn = state.turnId;
+                      _dragUpdateCount = 0;
+                      _traceGesture('pointer-down slot=$index');
                     },
                     onPointerUp: (PointerUpEvent event) {
                       final down = _trayTouches.remove(event.pointer);
-                      if (down == null ||
-                          (event.position - down).distance >= 16) return;
+                      if (down == null) return;
+                      final distance = (event.position - down).distance;
+                      _traceGesture('pointer-up slot=$index drag=${distance >= 16}');
+                      if (distance >= 16) {
+                        _placeFromGlobal(index, event.position, _activeDragTurn);
+                        return;
+                      }
                       setState(() {
                         _selectedSlot = _selectedSlot == index ? null : index;
                       });
                     },
                     onPointerCancel: (PointerCancelEvent event) {
+                      _traceGesture('pointer-cancel slot=$index');
                       _trayTouches.remove(event.pointer);
                     },
                     child: Semantics(
@@ -431,9 +478,15 @@ class _ClassicScreenState extends State<ClassicScreen>
                     // visual feedback. Required for precise Android cells.
                     dragAnchorStrategy: pointerDragAnchorStrategy,
                     feedbackOffset: Offset.zero,
-                    onDragStarted: () => _lastDragFinger = null,
-                    onDragUpdate: (details) =>
-                        _lastDragFinger = details.globalPosition,
+                    onDragStarted: () {
+                      _lastDragFinger = null;
+                      _activeDragTurn ??= state.turnId;
+                      _traceGesture('drag-start slot=$index');
+                    },
+                    onDragUpdate: (details) {
+                      _lastDragFinger = details.globalPosition;
+                      _dragUpdateCount++;
+                    },
                     onDragEnd: (details) => _finishDrag(index, details),
                     data: index,
                     feedback: Transform.translate(
