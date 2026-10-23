@@ -122,6 +122,20 @@ echo 'EMULATOR_SAVE_PASS'
 
 # Exercise a real Android touchscreen drag after the deterministic restore
 # smoke; never mutate the save JSON to fake an accepted player move.
+# Keep only BP-NG-GESTURE Flutter debug output (no phone/app private logs).
+capture_gesture_trace() {
+  local checkpoint="$1"
+  local line
+  echo "SMOKE-GESTURE-TRACE-BEGIN $checkpoint"
+  line="$(adb logcat -d -s flutter:I '*:S' 2>/dev/null | grep 'BP-NG-GESTURE' | tail -n 100 || true)"
+  if [[ -n "$line" ]]; then
+    printf '%s\n' "$line"
+  else
+    echo 'SMOKE-GESTURE-TRACE-EMPTY'
+  fi
+  echo "SMOKE-GESTURE-TRACE-END $checkpoint"
+}
+adb logcat -c || true
 wait_ui 'Tray slot 1'
 wait_ui 'Drop cell row 8 column 8'
 capture_ui
@@ -131,7 +145,9 @@ read -r from_x from_y <<< "$origin"
 read -r to_x to_y <<< "$destination"
 echo "DRAG-POINTER-FROM $from_x $from_y TO $to_x $to_y"
 adb shell input touchscreen draganddrop "$from_x" "$from_y" "$to_x" "$to_y" 1800
+capture_gesture_trace 'positive-drag'
 if ! wait_ui 'SCORE 78'; then
+  capture_gesture_trace 'positive-drag-failed'
   echo 'SMOKE-DRAG-FAIL: capturing the untouched/changed game state'
   capture_screen 'diagnostic-failed-native-drag'
   adb shell run-as "$PACKAGE" cat files/game-state.json || true
@@ -182,6 +198,33 @@ PY
 capture_screen "05-real-android-gameplay-drag-restored"
 echo 'SMOKE-REAL-DRAG-RELAUNCH-RNG-TURN-BOARD-PASS'
 
+# Negative native acceptance tests: a rejected placement must not mutate
+# score, turn or local snapshot, even after UI callbacks are delivered.
+check_rejected_native_drag() {
+  local label="$1" from_slot="$2" release_x="$3" release_y="$4"
+  local start_x start_y
+  read -r start_x start_y <<< "$(locate_ui "Tray slot $from_slot")"
+  adb shell run-as "$PACKAGE" cat files/game-state.json > "$TMP/negative-before.json"
+  echo "DRAG-NEGATIVE-$label FROM $start_x $start_y TO $release_x $release_y"
+  adb logcat -c || true
+  adb shell input touchscreen draganddrop "$start_x" "$start_y" "$release_x" "$release_y" 1800
+  capture_gesture_trace "negative-$label"
+  wait_ui 'SCORE 78'
+  sleep 1
+  adb shell run-as "$PACKAGE" cat files/game-state.json > "$TMP/negative-after.json"
+  python3 - "$TMP/negative-before.json" "$TMP/negative-after.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as f: before=json.load(f)
+with open(sys.argv[2],encoding='utf-8') as f: after=json.load(f)
+assert before == after, 'illegal/outside native drop mutated disk state'
+assert after['score']==78 and after['turnId']==10
+PY
+  echo "SMOKE-NEGATIVE-$label-STATE-UNCHANGED-PASS"
+}
+capture_ui
+read -r bad_x bad_y <<< "$(locate_ui 'Drop cell row 1 column 1')"
+check_rejected_native_drag 'OCCUPIED' 2 "$bad_x" "$bad_y"
+check_rejected_native_drag 'OUTSIDE' 2 "$from_x" 220
 
 # Device-size QA: force well-defined dp-like viewport via 160dpi. The
 # canonical dimensions come from 05 UI Design and 09 QA plans.
