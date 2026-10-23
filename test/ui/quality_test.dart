@@ -16,12 +16,14 @@ class _MemoryGameRepository implements GameRepository {
   Future<void> clear() async {}
 }
 
-GameState _fixture({bool over = false}) => GameState(
+GameState _fixture({bool over = false, bool lastSlot = false}) => GameState(
   board: over
       ? List<int?>.filled(64, 1)
       : (List<int?>.filled(64, null)..[0] = 1),
-  tray: [PieceCatalog.byId('single'),
-    PieceCatalog.byId('double_h'), PieceCatalog.byId('triple_v')],
+  tray: lastSlot
+      ? [PieceCatalog.byId('single'), null, null]
+      : [PieceCatalog.byId('single'),
+          PieceCatalog.byId('double_h'), PieceCatalog.byId('triple_v')],
   score: 73,
   bestScore: 100,
   combo: 0,
@@ -175,6 +177,62 @@ void main() {
     expect(repo.saved, hasLength(1));
     expect(repo.saved.single.turnId, 10);
     expect(repo.saved.single.board[63], 1);
+  });
+
+
+  testWidgets('UI-QA Android swipe without long-press commits one legal move',
+      (tester) async {
+    _screen(tester, 393, 873);
+    final repo = _MemoryGameRepository(_fixture());
+    await _buildClassic(tester, repo);
+    final finger = await tester.startGesture(
+        tester.getCenter(find.byType(LongPressDraggable<int>).first));
+    // This intentionally moves before the recognizer's long-press deadline:
+    // the raw-pointer recovery must not depend on onDragStarted/onDragEnd.
+    await tester.pump(const Duration(milliseconds: 50));
+    await finger.moveTo(tester.getCenter(find.byType(DragTarget<int>).last));
+    await tester.pump(const Duration(milliseconds: 50));
+    await finger.up();
+    await tester.pumpAndSettle();
+    expect(find.text('SCORE 78'), findsOneWidget);
+    expect(repo.saved, hasLength(1));
+    expect(repo.saved.single.turnId, 10);
+    expect(repo.saved.single.board[63], 1);
+  });
+
+  testWidgets('UI-QA raw pointer fallback rejects outside-board release',
+      (tester) async {
+    _screen(tester, 393, 873);
+    final repo = _MemoryGameRepository(_fixture());
+    await _buildClassic(tester, repo);
+    final finger = await tester.startGesture(
+        tester.getCenter(find.byType(LongPressDraggable<int>).first));
+    await tester.pump(const Duration(milliseconds: 40));
+    await finger.moveTo(const Offset(2, 2));
+    await tester.pump(const Duration(milliseconds: 40));
+    await finger.up();
+    await tester.pumpAndSettle();
+    expect(find.text('SCORE 73'), findsOneWidget);
+    expect(repo.saved, isEmpty);
+  });
+
+  testWidgets('UI-QA drag cannot double commit after 3-slot refill',
+      (tester) async {
+    _screen(tester, 393, 873);
+    final repo = _MemoryGameRepository(_fixture(lastSlot: true));
+    await _buildClassic(tester, repo);
+    final finger = await tester.startGesture(
+        tester.getCenter(find.byType(LongPressDraggable<int>).first));
+    await tester.pump(const Duration(milliseconds: 850));
+    await finger.moveTo(tester.getCenter(find.byType(DragTarget<int>).last));
+    await tester.pump(const Duration(milliseconds: 200));
+    await finger.up();
+    await tester.pumpAndSettle();
+    expect(find.text('SCORE 78'), findsOneWidget);
+    expect(repo.saved, hasLength(1));
+    expect(repo.saved.single.turnId, 10);
+    expect(repo.saved.single.board[63], 1);
+    expect(repo.saved.single.tray.whereType<Piece>(), hasLength(3));
   });
 
   testWidgets('UI-QA selecting a tray slot then tapping a legal cell commits',
