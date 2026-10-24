@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# Android API 35 emulator: install debug APK, seed schema-v1 snapshot,
+# verify real Flutter UI restore and force-stop/relaunch preservation.
+set -euo pipefail
+PACKAGE='com.embasicgames.block_plasma_neon_grid'
+ACTIVITY="$PACKAGE/.MainActivity"
+APK="$(find downloaded-apk -type f -name 'app-debug.apk' -print -quit)"
+if [[ -z "$APK" || ! -s "$APK" ]]; then
+  echo 'SMOKE-FAIL: APK missing'; exit 2
+fi
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+UI_XML="$TMP/window.xml"
+SHOT_DIR="${GITHUB_WORKSPACE:-.}/android-gameplay-screens"
+mkdir -p "$SHOT_DIR"
+capture_screen() {
+  local name="$1"
+  local output="$SHOT_DIR/$name.png"
+  sleep 1
+  adb exec-out screencap -p > "$output"
+  python3 - "$output" <<'PY'
+import os,sys
+path=sys.argv[1]
+with open(path,'rb') as f: signature=f.read(8)
+assert signature == bytes.fromhex('89504e470d0a1a0a'), 'not a genuine PNG'
+assert os.path.getsize(path)>10000, 'empty screen capture'
+print('REAL-ANDROID-SCREENSHOT-PASS', os.path.basename(path),os.path.getsize(path))
+PY
+}
+adb wait-for-device
+adb install -r "$APK"
+adb shell pm path "$PACKAGE" | grep -q 'package:'
+echo 'SMOKE-APK-INSTALLED'
+python3 - "$TMP/fixture.json" <<'PY'
+import json,sys
+snapshot = dict(schemaVersion=1,board=[1]+[None]*63,
+                tray=['single','double_h','triple_v'],
+                score=73,bestScore=100,combo=0,
+                rngState=314159265,turnId=9,gameOver=False)
+with open(sys.argv[1],'w',encoding='utf-8') as f:
+    json.dump(snapshot,f)
+PY
+adb shell am start -W -n "$ACTIVITY"
+sleep 4
+adb shell pidof "$PACKAGE" >/dev/null
+adb shell am force-stop "$PACKAGE"
+adb push "$TMP/fixture.json" /data/local/tmp/bp-ng-fixture.json >/dev/null
+adb shell run-as "$PACKAGE" cp /data/local/tmp/bp-ng-fixture.json files/game-state.json
+adb shell run-as "$PACKAGE" cat files/game-state.json > "$TMP/seeding.json"
+python3 - "$TMP/fixture.json" "$TMP/seeding.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as f: wanted=json.load(f)
+with open(sys.argv[2],encoding='utf-8') as f: actual=json.load(f)
+assert actual == wanted
+PY
+echo 'SMOKE-APP-SANDBOX-SEED-PASS'
+capture_ui() {
+  adb shell uiautomator dump /sdcard/bp-ng-window.xml >/dev/null 2>&1 || true
+  adb exec-out cat /sdcard/bp-ng-window.xml > "$UI_XML" 2>/dev/null || true
+}
+locate_ui() {
+  python3 - "$UI_XML" "$1" <<'PY'
+import re,sys,xml.etree.ElementTree as ET
+try: root=ET.parse(sys.argv[1]).getroot()
+except (OSError,ET.ParseError): sys.exit(1)
+needle=sys.argv[2].upper()
+for node in root.iter('node'):
+    label=(node.get('text','')+' '+node.get('content-desc','')).upper()
+    if needle not in label: continue
+    bounds=[int(x) for x in re.findall(r'\d+',node.get('bounds',''))]
+    if len(bounds)==4:
+        print((bounds[0]+bounds[2])//2,(bounds[1]+bounds[3])//2)
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+wait_ui() {
+  local needle="$1"
+  for _ in $(seq 1 14); do
+    capture_ui
+    if locate_ui "$needle" >/dev/null; then return 0; fi
+    sleep 2
+  done
+  echo "SMOKE-FAIL: UI text not found: $needle"
+  return 1
+}
+launch_and_check() {
+  local sequence="$1"
+  adb shell am start -W -n "$ACTIVITY"
+  wait_ui 'PLAY'
+  if [[ "$sequence" == "first" ]]; then capture_screen "01-real-android-home"; fi
+  local click
+  click="$(locate_ui 'PLAY')"
+  read -r x y <<< "$click"
+  adb shell input tap "$x" "$y"
+  wait_ui 'SCORE 73'
+  adb shell pidof "$PACKAGE" >/dev/null
+  if [[ "$sequence" == "first" ]]; then
+    capture_screen "02-real-android-gameplay-score73"
+  else
+    capture_screen "03-real-android-gameplay-restored"
+  fi
+  echo 'SMOKE-RESTORE-SCORE-73-PASS'
+}
+launch_and_check first
+adb shell input keyevent KEYCODE_HOME
+sleep 2
+adb shell am force-stop "$PACKAGE"
+launch_and_check second
+adb shell run-as "$PACKAGE" cat files/game-state.json > "$TMP/reopened.json"
+python3 - "$TMP/reopened.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as f: state=json.load(f)
+assert state['score']==73
+assert state['rngState']==314159265
+assert state['turnId']==9
+assert len(state['board'])==64 and len(state['tray'])==3
+print('SMOKE-RNG-TURN-SCHEMA-PASS')
+PY
+echo 'EMULATOR_SAVE_PASS'
+
+
+# Exercise a real Android touchscreen drag after the deterministic restore
+# smoke; never mutate the save JSON to fake an accepted player move.
+# Keep only BP-NG-GESTURE Flutter debug output (no phone/app private logs).
+capture_gesture_trace() {
+  local checkpoint="$1"
+  local line
+  echo "SMOKE-GESTURE-TRACE-BEGIN $checkpoint"
+  line="$(adb logcat -d -s flutter:I '*:S' 2>/dev/null | grep 'BP-NG-GESTURE' | tail -n 100 || true)"
+  if [[ -n "$line" ]]; then
+    printf '%s\n' "$line"
+  else
+    echo 'SMOKE-GESTURE-TRACE-EMPTY'
+  fi
+  echo "SMOKE-GESTURE-TRACE-END $checkpoint"
+}
+adb logcat -c || true
+wait_ui 'Tray slot 1'
+wait_ui 'Drop cell row 8 column 8'
+capture_ui
+origin="$(locate_ui 'Tray slot 1')"
+destination="$(locate_ui 'Drop cell row 8 column 8')"
+read -r from_x from_y <<< "$origin"
+read -r to_x to_y <<< "$destination"
+echo "DRAG-POINTER-FROM $from_x $from_y TO $to_x $to_y"
+adb shell input touchscreen draganddrop "$from_x" "$from_y" "$to_x" "$to_y" 1800
+capture_gesture_trace 'positive-drag'
+if ! wait_ui 'SCORE 78'; then
+  capture_gesture_trace 'positive-drag-failed'
+  echo 'SMOKE-DRAG-FAIL: capturing the untouched/changed game state'
+  capture_screen 'diagnostic-failed-native-drag'
+  adb shell run-as "$PACKAGE" cat files/game-state.json || true
+  exit 1
+fi
+echo 'SMOKE-REAL-DRAG-UI-SCORE-78-PASS'
+
+verify_drag_save() {
+  local output="$1"
+  for _ in $(seq 1 12); do
+    adb shell run-as "$PACKAGE" cat files/game-state.json > "$output"
+    if python3 - "$output" <<'PY'
+import json,sys
+with open(sys.argv[1], encoding="utf-8") as f: s=json.load(f)
+assert s['schemaVersion']==1 and s['score']==78 and s['bestScore']==100
+assert s['turnId']==10 and s['rngState']==314159265 and s['combo']==0
+assert len(s['board'])==64 and s['board'][0]==1 and s['board'][63]==1
+assert sum(v is not None for v in s['board'])==2
+assert s['tray']==[None,'double_h','triple_v']
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "SMOKE-FAIL: actual draggable did not produce canonical saved move"
+  return 1
+}
+verify_drag_save "$TMP/drag-committed.json"
+echo 'SMOKE-REAL-DRAG-DISK-SNAPSHOT-PASS'
+capture_screen "04-real-android-gameplay-after-drag"
+
+adb shell am force-stop "$PACKAGE"
+adb shell am start -W -n "$ACTIVITY"
+wait_ui 'PLAY'
+capture_ui
+click="$(locate_ui 'PLAY')"
+read -r replay_x replay_y <<< "$click"
+adb shell input tap "$replay_x" "$replay_y"
+wait_ui 'SCORE 78'
+verify_drag_save "$TMP/drag-relaunched.json"
+python3 - "$TMP/drag-committed.json" "$TMP/drag-relaunched.json" <<'PY'
+import json,sys
+with open(sys.argv[1], encoding='utf-8') as f: before=json.load(f)
+with open(sys.argv[2], encoding='utf-8') as f: after=json.load(f)
+assert before==after, 'cold relaunch changed committed state'
+PY
+capture_screen "05-real-android-gameplay-drag-restored"
+echo 'SMOKE-REAL-DRAG-RELAUNCH-RNG-TURN-BOARD-PASS'
+
+# Negative native acceptance tests: a rejected placement must not mutate
+# score, turn or local snapshot, even after UI callbacks are delivered.
+check_rejected_native_drag() {
+  local label="$1" from_slot="$2" release_x="$3" release_y="$4"
+  local start_x start_y
+  read -r start_x start_y <<< "$(locate_ui "Tray slot $from_slot")"
+  adb shell run-as "$PACKAGE" cat files/game-state.json > "$TMP/negative-before.json"
+  echo "DRAG-NEGATIVE-$label FROM $start_x $start_y TO $release_x $release_y"
+  adb logcat -c || true
+  adb shell input touchscreen draganddrop "$start_x" "$start_y" "$release_x" "$release_y" 1800
+  capture_gesture_trace "negative-$label"
+  wait_ui 'SCORE 78'
+  sleep 1
+  adb shell run-as "$PACKAGE" cat files/game-state.json > "$TMP/negative-after.json"
+  python3 - "$TMP/negative-before.json" "$TMP/negative-after.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as f: before=json.load(f)
+with open(sys.argv[2],encoding='utf-8') as f: after=json.load(f)
+assert before == after, 'illegal/outside native drop mutated disk state'
+assert after['score']==78 and after['turnId']==10
+PY
+  echo "SMOKE-NEGATIVE-$label-STATE-UNCHANGED-PASS"
+}
+capture_ui
+read -r bad_x bad_y <<< "$(locate_ui 'Drop cell row 1 column 1')"
+check_rejected_native_drag 'OCCUPIED' 2 "$bad_x" "$bad_y"
+check_rejected_native_drag 'OUTSIDE' 2 "$from_x" 220
+
+# Device-size QA: force well-defined dp-like viewport via 160dpi. The
+# canonical dimensions come from 05 UI Design and 09 QA plans.
+for viewport in '320 640' '360 800' '393 873' '412 915'; do
+  read -r width height <<< "$viewport"
+  adb shell wm size "${width}x${height}"
+  adb shell wm density 160
+  sleep 2
+  wait_ui 'SCORE 78'
+  wait_ui 'Drop cell row 8 column 8'
+  wait_ui 'Tray slot 2'
+  capture_screen "responsive-${width}x${height}"
+  python3 - "$SHOT_DIR/responsive-${width}x${height}.png" "$width" "$height" <<'PY'
+import struct,sys
+path,width,height=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+with open(path,'rb') as f:
+    png=f.read(24)
+assert png[:8] == bytes.fromhex('89504e470d0a1a0a')
+assert struct.unpack('>II',png[16:24]) == (width,height), (
+    'screenshot size mismatch',png[16:24],width,height)
+print('EMULATOR-RESPONSIVE-VIEWPORT-PASS',width,height)
+PY
+done
+adb shell wm size reset
+adb shell wm density reset
+echo 'EMULATOR-ALL-RESPONSIVE-SIZES-PASS'
