@@ -248,6 +248,45 @@ void main() {
     expect(find.text('SCORE 78'), findsOneWidget);
   });
 
+
+  testWidgets('I003 board canvas keeps all 64 legal drop targets',
+      (tester) async {
+    _screen(tester, 320, 640);
+    final repository = _MemoryGameRepository(_fixture());
+    await _buildClassic(tester, repository);
+    final canvas = find.byKey(const ValueKey('plasma-board-canvas'));
+    expect(canvas, findsOneWidget);
+    expect(find.byType(DragTarget<int>), findsNWidgets(64));
+    expect(find.byKey(const ValueKey('board-tap-63')), findsOneWidget);
+    final boardSize = tester.getSize(find.byType(GridView));
+    expect(tester.getSize(canvas), boardSize);
+    await tester.tap(find.byKey(const ValueKey('tray-select-0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('board-tap-63')));
+    await tester.pumpAndSettle();
+    expect(repository.saved, hasLength(1));
+    expect(repository.saved.single.board[63], 1);
+    expect(repository.saved.single.score, 78);
+  });
+
+  testWidgets('I003 canvas repaints only when immutable board changes',
+      (tester) async {
+    _screen(tester, 393, 873);
+    final repository = _MemoryGameRepository(_fixture());
+    await _buildClassic(tester, repository);
+    final key = find.byKey(const ValueKey('plasma-board-canvas'));
+    final before = tester.widget<CustomPaint>(key).painter;
+    expect(before, isNotNull);
+    // Tap a legal cell; this must replace the immutable board snapshot.
+    await tester.tap(find.byKey(const ValueKey('tray-select-0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('board-tap-63')));
+    await tester.pumpAndSettle();
+    final after = tester.widget<CustomPaint>(key).painter;
+    expect(identical(before, after), isFalse);
+    expect(repository.saved.single.turnId, 10);
+  });
+
   testWidgets('UI-QA drag preview is above pointer by 44dp', (tester) async {
     await _buildClassic(tester, _MemoryGameRepository(_fixture()));
     final drag = tester.widget<LongPressDraggable<int>>(
