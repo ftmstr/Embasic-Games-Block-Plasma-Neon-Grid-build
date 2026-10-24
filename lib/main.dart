@@ -6,6 +6,7 @@ import 'data/game_repository.dart';
 import 'data/game_storage.dart';
 import 'domain/game_engine.dart';
 import 'design/tokens.dart';
+import 'design/neon_board_painter.dart';
 
 void main() => runApp(const BlockPlasmaApp());
 
@@ -378,7 +379,14 @@ class _ClassicScreenState extends State<ClassicScreen>
                       color: PlasmaColors.warning)),
             const SizedBox(height: 12),
             SizedBox(key: _boardKey, width: boardSize, height: boardSize,
-              child: GridView.builder(
+              child: Stack(fit: StackFit.expand, children: [
+                // One snapshot-backed canvas; the 64 existing DragTargets stay
+                // above it for touch, hover and screen-reader semantics.
+                RepaintBoundary(child: CustomPaint(
+                  key: const ValueKey('plasma-board-canvas'),
+                  painter: NeonBoardPainter(cells: state.board),
+                )),
+                GridView.builder(
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 8),
@@ -398,8 +406,6 @@ class _ClassicScreenState extends State<ClassicScreen>
                     builder: (context, candidateData, rejectedData) {
                       final targetPiece = candidateData.isEmpty ? null : state.tray[candidateData.first!];
                       final legal = targetPiece != null && GameEngine.canPlace(state, targetPiece, row, col);
-                      final colorIndex = state.board[index];
-                      final base = colorIndex == null ? PlasmaColors.empty : PlasmaColors.block(colorIndex);
                       return GestureDetector(
                         key: ValueKey('board-tap-$index'),
                         behavior: HitTestBehavior.opaque,
@@ -411,25 +417,27 @@ class _ClassicScreenState extends State<ClassicScreen>
                         button: true,
                         label: 'Drop cell row ${row + 1} column ${col + 1}',
                         child: Container(
-                        margin: const EdgeInsets.all(1.5),
-                        decoration: BoxDecoration(
-                          color: candidateData.isNotEmpty
-                              ? (legal ? PlasmaColors.lime.withValues(alpha: 0.45)
-                                       : PlasmaColors.warning.withValues(alpha: 0.35))
-                              : base,
-                          borderRadius: BorderRadius.circular(5),
-                          border: Border.all(color: candidateData.isNotEmpty
-                            ? (legal ? PlasmaColors.lime : PlasmaColors.warning)
-                            : PlasmaColors.gridStroke, width: 1),
-                          boxShadow: colorIndex == null ? null : [BoxShadow(
-                            color: base.withValues(alpha: 0.25), blurRadius: 6)],
-                        ),
+                          margin: const EdgeInsets.all(1.5),
+                          // The painter owns idle/settled cells. This overlay
+                          // only highlights an active drag, without hiding
+                          // the single-canvas bevel and grid behind it.
+                          decoration: candidateData.isEmpty ? null : BoxDecoration(
+                            color: legal
+                                ? PlasmaColors.lime.withValues(alpha: 0.45)
+                                : PlasmaColors.warning.withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(
+                              color: legal ? PlasmaColors.lime : PlasmaColors.warning,
+                              width: 1.5,
+                            ),
+                          ),
                         ),
                         ),
                       );
                     });
                 },
-              )),
+                ),
+              ])),
             const SizedBox(height: 18),
             Text('DRAG A PIECE TO THE GRID', style: TextStyle(
               color: PlasmaColors.secondary.withValues(alpha: 0.9), fontSize: 11)),
